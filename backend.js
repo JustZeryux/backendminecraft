@@ -5,144 +5,107 @@ const archiver = require('archiver');
 const { Readable } = require('stream');
 const http = require('http');
 const { Server } = require('socket.io');
+
+// 1. Inicialización correcta (Orden Vital)
+const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-const app = express();
-
-// Configuración de seguridad y lectura de datos
-// --- CONFIGURACIÓN ACTUALIZADA ---
+// 2. Configuración de límites (Fix Error 413)
 app.use(cors()); 
-
-// Aumentamos el límite para que acepte JSONs grandes (la lista de mods)
 app.use(express.json({ limit: '500mb' })); 
-
-// Aumentamos el límite para envíos de formularios pesados
 app.use(express.urlencoded({ limit: '500mb', extended: true }));
 
-// Ruta de "Health Check" (Para que Render/Railway sepan que el server está vivo)
 app.get('/', (req, res) => {
-    res.send('🚀 API de MinePack Studio funcionando correctamente.');
+    res.send('🚀 API de MinePack Studio Pro funcionando correctamente.');
 });
 
-// --- API PRINCIPAL: ENSAMBLADO Y EXPORTACIÓN FINAL ---
 app.post('/api/export', async (req, res) => {
     try {
-        const { mcVersion, modLoader, mods, socketId } = payload; 
-        let completedMods = 0;
-        // Leemos los datos que envía el frontend
+        // Extraemos el payload una sola vez
         const payload = req.body.exportData ? JSON.parse(req.body.exportData) : req.body;
-        const { mcVersion, modLoader, mods, worldSettings } = payload;
+        const { mcVersion, modLoader, mods, worldSettings, socketId } = payload;
         
-        console.log(`[MinePack] Iniciando ensamblado de Modpack para MC ${mcVersion} (${mods.length} items)...`);
+        let completedMods = 0;
+        console.log(`[MinePack] Ensamblando Modpack para MC ${mcVersion} (${mods.length} mods)...`);
 
-        // 1. Configuramos el navegador del usuario para que entienda que va a recibir un archivo descargable
+        // Configuración de descarga
         const zipName = `Mod_Pack_${mcVersion}_${Date.now()}.zip`;
         res.setHeader('Content-Type', 'application/zip');
         res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
 
-        // 2. Iniciamos el motor de compresión ZIP
         const archive = archiver('zip', { zlib: { level: 9 } });
-        
-        // Si el compresor falla, detenemos el proceso
         archive.on('error', (err) => { 
             console.error('[Archiver Error]', err);
-            if (!res.headersSent) res.status(500).send('Error comprimiendo el archivo');
+            if (!res.headersSent) res.status(500).send('Error comprimiendo');
         });
         
-        // CONEXIÓN VITAL: Conectamos la salida del ZIP directamente a la respuesta web (Stream)
         archive.pipe(res);
 
-        // --- GENERACIÓN DE ARCHIVOS DE TEXTO AL VUELO ---
-        const readmeText = `¡Tu Modpack de MinePack Studio está listo!
-Version de Minecraft: ${mcVersion}
-Mod Loader: ${modLoader}
-
-=========================================
-1. COMO INSTALAR EN TU PC (Para poder jugar)
-=========================================
-1. Instala ${modLoader} ${mcVersion} en tu cliente de Minecraft.
-2. Presiona las teclas Win + R, escribe %appdata% y presiona Enter.
-3. Entra a la carpeta .minecraft.
-4. Pega las carpetas 'mods', 'shaderpacks' y 'resourcepacks' de este ZIP alli adentro.
-5. Abre tu Launcher de Minecraft, selecciona el perfil de ${modLoader} y a jugar.`;
-
+        // Archivos base
+        const readmeText = `¡Modpack listo!\nMinecraft: ${mcVersion}\nLoader: ${modLoader}`;
         archive.append(readmeText, { name: 'INSTRUCCIONES.txt' });
 
         if (worldSettings) {
-            let serverPropsText = `# Generado por MinePack Studio\ngamemode=${worldSettings.gamemode || 'survival'}\ndifficulty=${worldSettings.difficulty || 'normal'}\n`;
-            if (worldSettings.seed && worldSettings.seed.trim() !== '') {
-                serverPropsText += `level-seed=${worldSettings.seed}\n`;
-            }
-            archive.append(serverPropsText, { name: 'server.properties' });
+            let serverProps = `# Generado por MinePack Studio\ngamemode=${worldSettings.gamemode || 'survival'}\n`;
+            archive.append(serverProps, { name: 'server.properties' });
         }
 
-        // --- DESCARGA E INYECCIÓN DE MODS AL ZIP ---
+        // --- LÓGICA DE MODRINTH (Recuperada y Mejorada) ---
         const downloadPromises = mods.map(async (modItem) => {
             try {
-                // Preparamos los filtros para la API de Modrinth
                 const encodedVersion = encodeURIComponent(`["${mcVersion}"]`);
                 const encodedLoader = encodeURIComponent(`["${modLoader}"]`);
                 
                 let strictUrl = `https://api.modrinth.com/v2/project/${modItem.id}/version?game_versions=${encodedVersion}`;
                 if (modItem.type === 'mod') strictUrl += `&loaders=${encodedLoader}`;
-                completedMods++;
-        // Enviamos el progreso real al cliente específico
-             if (socketId) {
-             const progress = Math.round((completedMods / mods.length) * 100);
-             io.to(socketId).emit('download-progress', { progress, currentMod: modItem.title });
-             }
-      
-                // Buscamos la versión correcta
+
                 let versionRes = await fetch(strictUrl);
                 let versions = await versionRes.json();
                 
-                // Modo rescate (si no hay versión exacta, probamos sin filtros)
                 if (!versions || versions.length === 0) {
                     const fallbackRes = await fetch(`https://api.modrinth.com/v2/project/${modItem.id}/version`);
                     versions = await fallbackRes.json();
                 }
 
-                if (!versions || versions.length === 0) return; // Si definitivamente no existe, lo saltamos
+                if (versions && versions.length > 0) {
+                    const fileData = versions[0].files.find(f => f.primary) || versions[0].files[0];
+                    
+                    // Definimos carpeta destino
+                    let targetFolder = 'mods';
+                    if (modItem.type === 'shader') targetFolder = 'shaderpacks';
+                    if (modItem.type === 'resourcepack') targetFolder = 'resourcepacks';
 
-                const fileData = versions[0].files.find(f => f.primary) || versions[0].files[0];
-                
-                let targetFolder = 'mods';
-                if (modItem.type === 'shader') targetFolder = 'shaderpacks';
-                if (modItem.type === 'resourcepack') targetFolder = 'resourcepacks';
+                    // Descarga vía Stream
+                    const fileResponse = await fetch(fileData.url);
+                    if (fileResponse.ok) {
+                        const nodeStream = Readable.fromWeb(fileResponse.body);
+                        archive.append(nodeStream, { name: `${targetFolder}/${fileData.filename}` });
+                    }
+                }
 
-                // Descargamos el archivo .jar
-                const fileResponse = await fetch(fileData.url);
-                if (!fileResponse.ok) throw new Error("Error en la descarga desde Modrinth");
-                
-                // MODO STREAM: Pasamos la descarga directamente al compresor ZIP sin guardarla en memoria
-                const nodeStream = Readable.fromWeb(fileResponse.body);
-                archive.append(nodeStream, { name: `${targetFolder}/${fileData.filename}` });
-                
-                console.log(`[MinePack] Inyectando: ${fileData.filename}`);
+                // Notificar progreso vía Socket
+                completedMods++;
+                if (socketId) {
+                    const progress = Math.round((completedMods / mods.length) * 100);
+                    io.to(socketId).emit('download-progress', { 
+                        progress, 
+                        currentMod: modItem.title || 'Archivo' 
+                    });
+                }
 
             } catch (err) {
-                console.error(`[Error] Falló la descarga de ${modItem.title || modItem.id}: ${err.message}`);
+                console.error(`[Error] Falló ${modItem.id}: ${err.message}`);
             }
         });
 
-        // Finalizamos el ZIP. Esto cierra el archivo y le dice al navegador del usuario "Descarga completada".
-       await Promise.all(downloadPromises);
+        await Promise.all(downloadPromises);
 
-        // --- SOLUCIÓN: ESPERAR A QUE EL ZIP REALMENTE SE ESCRIBA ---
-        console.log(`[MinePack] Finalizando y empaquetando...`);
-        
-        // Creamos una promesa que solo se resuelve cuando la respuesta web se haya enviado por completo
+        // Finalización segura
         const finalizeArchive = () => {
             return new Promise((resolve, reject) => {
-                res.on('finish', () => {
-                    console.log(`[MinePack] ZIP enviado al usuario con éxito (${archive.pointer()} bytes).`);
-                    resolve();
-                });
-                res.on('error', (err) => {
-                    console.error('[Error de Respuesta]', err);
-                    reject(err);
-                });
+                res.on('finish', () => resolve());
+                res.on('error', (err) => reject(err));
                 archive.finalize();
             });
         };
@@ -150,13 +113,12 @@ Mod Loader: ${modLoader}
         await finalizeArchive();
 
     } catch (error) {
-        console.error("[ERROR FATAL EN ENSAMBLADO]", error);
-        if(!res.headersSent) res.status(500).json({ error: "Fallo el ensamblado final." });
+        console.error("[ERROR FATAL]", error);
+        if(!res.headersSent) res.status(500).json({ error: "Error en el servidor." });
     }
 });
 
-// Inicializamos el servidor
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`🚀 Servidor con WebSockets en puerto ${PORT}`);
+    console.log(`🚀 Servidor Pro listo en puerto ${PORT}`);
 });
