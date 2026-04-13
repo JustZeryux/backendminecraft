@@ -3,6 +3,10 @@ const express = require('express');
 const cors = require('cors');
 const archiver = require('archiver'); 
 const { Readable } = require('stream');
+const http = require('http');
+const { Server } = require('socket.io');
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
 
 const app = express();
 
@@ -24,6 +28,8 @@ app.get('/', (req, res) => {
 // --- API PRINCIPAL: ENSAMBLADO Y EXPORTACIÓN FINAL ---
 app.post('/api/export', async (req, res) => {
     try {
+        const { mcVersion, modLoader, mods, socketId } = payload; 
+        let completedMods = 0;
         // Leemos los datos que envía el frontend
         const payload = req.body.exportData ? JSON.parse(req.body.exportData) : req.body;
         const { mcVersion, modLoader, mods, worldSettings } = payload;
@@ -80,7 +86,13 @@ Mod Loader: ${modLoader}
                 
                 let strictUrl = `https://api.modrinth.com/v2/project/${modItem.id}/version?game_versions=${encodedVersion}`;
                 if (modItem.type === 'mod') strictUrl += `&loaders=${encodedLoader}`;
-
+                completedMods++;
+        // Enviamos el progreso real al cliente específico
+             if (socketId) {
+             const progress = Math.round((completedMods / mods.length) * 100);
+             io.to(socketId).emit('download-progress', { progress, currentMod: modItem.title });
+             }
+      
                 // Buscamos la versión correcta
                 let versionRes = await fetch(strictUrl);
                 let versions = await versionRes.json();
@@ -114,12 +126,28 @@ Mod Loader: ${modLoader}
             }
         });
 
-        // Esperamos a que todos los mods terminen de inyectarse
-        await Promise.all(downloadPromises);
-
         // Finalizamos el ZIP. Esto cierra el archivo y le dice al navegador del usuario "Descarga completada".
-        await archive.finalize();
-        console.log(`[MinePack] Ensamblado finalizado con éxito.`);
+       await Promise.all(downloadPromises);
+
+        // --- SOLUCIÓN: ESPERAR A QUE EL ZIP REALMENTE SE ESCRIBA ---
+        console.log(`[MinePack] Finalizando y empaquetando...`);
+        
+        // Creamos una promesa que solo se resuelve cuando la respuesta web se haya enviado por completo
+        const finalizeArchive = () => {
+            return new Promise((resolve, reject) => {
+                res.on('finish', () => {
+                    console.log(`[MinePack] ZIP enviado al usuario con éxito (${archive.pointer()} bytes).`);
+                    resolve();
+                });
+                res.on('error', (err) => {
+                    console.error('[Error de Respuesta]', err);
+                    reject(err);
+                });
+                archive.finalize();
+            });
+        };
+
+        await finalizeArchive();
 
     } catch (error) {
         console.error("[ERROR FATAL EN ENSAMBLADO]", error);
@@ -129,6 +157,6 @@ Mod Loader: ${modLoader}
 
 // Inicializamos el servidor
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Servidor Híbrido Activo en el puerto ${PORT}`);
+server.listen(PORT, () => {
+    console.log(`🚀 Servidor con WebSockets en puerto ${PORT}`);
 });
