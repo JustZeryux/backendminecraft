@@ -1,29 +1,46 @@
- require('dotenv').config();
-const archiver = require('archiver'); 
-const { Readable } = require('stream');
-const http = require('http');
-const { Server } = require('socket.io');
-
-// 1. INICIALIZACIÓN (El orden aquí es vida o muerte)
-const server = http.createServer(app);
-
-// 2. CONFIGURACIÓN DE SOCKETS CON CORS EXPLÍCITO
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const http = require('http');
+const { Server } = require('socket.io');
+const archiver = require('archiver'); 
+const { Readable } = require('stream');
+
+// 1. INICIALIZAR EXPRESS
 const app = express();
 
-// Permite que Express acepte peticiones de tu frontend
-app.use(cors({
-    origin: ['https://coremod.pages.dev', 'http://localhost:3000'], // Añade localhost si pruebas en local
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    credentials: true // Importante si usas cookies o sesiones
-}));
+// 2. CREAR EL SERVIDOR HTTP
+// Es fundamental pasarle la app de Express al servidor HTTP
+const server = http.createServer(app);
 
-// 3. MIDDLEWARES DE EXPRESS
-app.use(cors({ origin: "https://coremod.pages.dev", credentials: true }));
+// 3. INICIALIZAR SOCKET.IO Y CONFIGURAR SU CORS (ESTO SOLUCIONA TU ERROR EN CONSOLA)
+const io = new Server(server, {
+    cors: {
+        origin: ['https://coremod.pages.dev', 'http://localhost:3000'],
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
+        credentials: true
+    }
+});
+
+// 4. CONFIGURAR MIDDLEWARES DE EXPRESS
+app.use(cors({
+    origin: ['https://coremod.pages.dev', 'http://localhost:3000'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true
+}));
 app.use(express.json({ limit: '500mb' })); 
 app.use(express.urlencoded({ limit: '500mb', extended: true }));
 
+// 5. EVENTOS DE SOCKET.IO
+io.on('connection', (socket) => {
+    console.log(`Un usuario se ha conectado a WebSockets: ${socket.id}`);
+    
+    socket.on('disconnect', () => {
+        console.log(`Usuario desconectado: ${socket.id}`);
+    });
+});
+
+// 6. RUTAS DE EXPRESS
 app.get('/', (req, res) => {
     res.send('🚀 Servidor de MinePack Studio Activo y Escuchando.');
 });
@@ -78,7 +95,7 @@ app.post('/api/export', async (req, res) => {
                     }
                 }
 
-                // Notificar progreso
+                // Notificar progreso usando la instancia "io" global
                 completedMods++;
                 if (socketId) {
                     const progress = Math.round((completedMods / mods.length) * 100);
@@ -103,7 +120,7 @@ app.post('/api/export', async (req, res) => {
     }
 });
 
-// 4. EL PASO FINAL: server.listen en lugar de app.listen
+// 7. INICIAR EL SERVIDOR (Siempre "server", NUNCA "app")
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`🚀 Motor de MinePack listo en el puerto ${PORT}`);
