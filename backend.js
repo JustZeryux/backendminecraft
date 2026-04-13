@@ -1,24 +1,23 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
+ require('dotenv').config();
 const archiver = require('archiver'); 
 const { Readable } = require('stream');
 const http = require('http');
 const { Server } = require('socket.io');
 
 // 1. INICIALIZACIÓN (El orden aquí es vida o muerte)
-const app = express();
 const server = http.createServer(app);
 
 // 2. CONFIGURACIÓN DE SOCKETS CON CORS EXPLÍCITO
-const io = new Server(server, { 
-    cors: { 
-        origin: "https://coremod.pages.dev", // <--- Tu URL de Cloudflare
-        methods: ["GET", "POST"],
-        credentials: true
-    },
-    transports: ['websocket', 'polling'] // Asegura compatibilidad
-});
+const express = require('express');
+const cors = require('cors');
+const app = express();
+
+// Permite que Express acepte peticiones de tu frontend
+app.use(cors({
+    origin: ['https://coremod.pages.dev', 'http://localhost:3000'], // Añade localhost si pruebas en local
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true // Importante si usas cookies o sesiones
+}));
 
 // 3. MIDDLEWARES DE EXPRESS
 app.use(cors({ origin: "https://coremod.pages.dev", credentials: true }));
