@@ -7,9 +7,14 @@ const { Readable } = require('stream');
 const app = express();
 
 // Configuración de seguridad y lectura de datos
-app.use(cors()); // Permite que tu frontend en Cloudflare se conecte aquí
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// --- CONFIGURACIÓN ACTUALIZADA ---
+app.use(cors()); 
+
+// Aumentamos el límite para que acepte JSONs grandes (la lista de mods)
+app.use(express.json({ limit: '500mb' })); 
+
+// Aumentamos el límite para envíos de formularios pesados
+app.use(express.urlencoded({ limit: '500mb', extended: true }));
 
 // Ruta de "Health Check" (Para que Render/Railway sepan que el server está vivo)
 app.get('/', (req, res) => {
