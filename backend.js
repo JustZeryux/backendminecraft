@@ -9,8 +9,13 @@ const { Server } = require('socket.io');
 // 1. Inicialización correcta (Orden Vital)
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
-
+const io = new Server(server, { 
+    cors: { 
+        origin: "https://coremod.pages.dev", // <--- TU URL DE CLOUDFLARE
+        methods: ["GET", "POST"],
+        credentials: true
+    } 
+});
 // 2. Configuración de límites (Fix Error 413)
 app.use(cors()); 
 app.use(express.json({ limit: '500mb' })); 
