@@ -101,11 +101,18 @@ app.post('/api/export', async (req, res) => {
                     const progress = Math.round((completedMods / mods.length) * 100);
                     io.to(socketId).emit('download-progress', { progress, currentMod: modItem.title || 'Archivo' });
                 }
+                
             } catch (e) { console.error("Error en mod:", modItem.id); }
         });
 
         await Promise.all(downloadPromises);
 
+        if (socketId) {
+            io.to(socketId).emit('download-progress', { 
+                progress: 100, 
+                currentMod: 'Empaquetando y transfiriendo ZIP... (No cierres la página)' 
+            });
+        }
         const finalize = () => new Promise((resolve, reject) => {
             res.on('finish', () => resolve());
             res.on('error', reject);
