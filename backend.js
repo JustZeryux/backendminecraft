@@ -71,7 +71,8 @@ app.post('/api/export', async (req, res) => {
 
         if (worldSettings) {
             let serverProps = `# Generado por MinePack Studio\ngamemode=${worldSettings.gamemode || 'survival'}\n`;
-            archive.append(serverProps, { name: 'server.properties' });
+// FORMA CORRECTA DE LEER EL ARCHIVO FÍSICO:
+archive.file('minecraft_server/server.properties', { name: 'server.properties' })
         }
 
         // Descarga de mods
